@@ -1,0 +1,3 @@
+[submodule "UNIPLU-BR"]
+	path = UNIPLU-BR
+	url = https://github.com/LARHENA/UNIPLU-BR.git
