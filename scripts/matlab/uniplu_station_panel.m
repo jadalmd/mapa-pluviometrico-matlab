@@ -1,9 +1,24 @@
 clear; clc; close all;
 
 % Load MAT file and extract the first struct found in it.
-matFile = 'dados_hidro_br_mensal.mat';
-if ~isfile(matFile)
-    error('File not found: %s', matFile);
+scriptDir = fileparts(mfilename('fullpath'));
+projectRoot = fileparts(fileparts(scriptDir));
+matCandidates = {
+    fullfile(projectRoot, 'dados_hidro_br_mensal.mat')
+    fullfile(projectRoot, 'outputs', 'dados_hidro_br_mensal.mat')
+    'dados_hidro_br_mensal.mat'
+};
+
+matFile = '';
+for i = 1:numel(matCandidates)
+    if isfile(matCandidates{i})
+        matFile = matCandidates{i};
+        break;
+    end
+end
+
+if isempty(matFile)
+    error('File not found: dados_hidro_br_mensal.mat');
 end
 
 loadedData = load(matFile);
