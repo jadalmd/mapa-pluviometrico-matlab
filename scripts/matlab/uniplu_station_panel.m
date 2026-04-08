@@ -152,8 +152,8 @@ grid on;
 xlabel('Year');
 ylabel('Annual Rain (mm)');
 
-validAnnual = annualTotals(~isnan(annualTotals));
-[pValue, senSlope, trendLabel] = runKtaubSafe(validAnnual);
+validMaskAnnual = ~isnan(annualTotals);
+[pValue, senSlope, trendLabel] = runKtaubSafe(annualYears(validMaskAnnual), annualTotals(validMaskAnnual));
 
 pText = formatMetric(pValue);
 senText = formatMetric(senSlope);
@@ -221,75 +221,50 @@ end
 end
 
 
-function [pValue, senSlope, trendLabel] = runKtaubSafe(series)
+function [pValue, senSlope, trendLabel] = runKtaubSafe(years, values)
 pValue = NaN;
 senSlope = NaN;
 trendLabel = '';
 
-if numel(series) < 3
+if numel(values) < 3 || numel(years) ~= numel(values)
     return;
 end
 
 alpha = 0.05;
+datain = [years(:), values(:)];
 
-% Try common ktaub signatures without assuming exact output order.
+% ktaub in this repository expects datain as [time, value].
 try
-    [o1,o2,o3,o4,o5,o6,o7,o8,o9] = ktaub(series, alpha); %#ok<ASGLU>
-    numCandidates = [o1,o2,o3,o4,o5,o6,o7,o9];
-    pValue = pickPValue(numCandidates);
-    senSlope = pickSlope(o9, numCandidates);
-    trendLabel = pickTrendLabel(o8);
+    [~,~,h,sig,~,~,~,sen] = ktaub(datain, alpha, 0);
+    pValue = sig;
+    senSlope = sen;
+    trendLabel = mkTrendLabel(h, senSlope);
     return;
 catch
 end
 
 try
-    [o1,o2,o3,o4,o5,o6,o7,o8,o9] = ktaub(series); %#ok<ASGLU>
-    numCandidates = [o1,o2,o3,o4,o5,o6,o7,o9];
-    pValue = pickPValue(numCandidates);
-    senSlope = pickSlope(o9, numCandidates);
-    trendLabel = pickTrendLabel(o8);
+    [~,~,h,sig,~,~,~,sen] = ktaub(datain, alpha);
+    pValue = sig;
+    senSlope = sen;
+    trendLabel = mkTrendLabel(h, senSlope);
 catch
     trendLabel = 'ktaub not available or incompatible';
 end
 end
 
 
-function p = pickPValue(candidates)
-p = NaN;
-for i = 1:numel(candidates)
-    v = candidates(i);
-    if isfinite(v) && v >= 0 && v <= 1
-        p = v;
-        return;
+function t = mkTrendLabel(h, senSlope)
+if isnumeric(h) && h == 1
+    if isfinite(senSlope) && senSlope > 0
+        t = 'Increasing trend';
+    elseif isfinite(senSlope) && senSlope < 0
+        t = 'Decreasing trend';
+    else
+        t = 'Significant trend';
     end
-end
-end
-
-
-function s = pickSlope(preferred, candidates)
-if isfinite(preferred)
-    s = preferred;
-    return;
-end
-
-s = NaN;
-for i = 1:numel(candidates)
-    v = candidates(i);
-    if isfinite(v) && abs(v) > 0 && abs(v) < 1e6
-        s = v;
-    end
-end
-end
-
-
-function t = pickTrendLabel(x)
-if ischar(x)
-    t = x;
-elseif isstring(x)
-    t = char(x);
 else
-    t = '';
+    t = 'No significant trend';
 end
 end
 
