@@ -65,3 +65,23 @@ export_monthly_filtered_to_mat(df_monthly_filtered, 'dados_hidro_br_mensal.mat')
 
 - `pandas`
 - `scipy`
+
+## Repository Organization
+
+To reduce clutter and keep processing artifacts separated from source files:
+
+1. Generated outputs are stored in [outputs](outputs).
+2. MATLAB analysis scripts are stored in [scripts/matlab](scripts/matlab).
+3. Python helper script folders are available in [scripts/python](scripts/python).
+
+### New MATLAB Interactive Panel Script
+
+Use [scripts/matlab/uniplu_station_panel.m](scripts/matlab/uniplu_station_panel.m) to:
+
+1. Load `dados_hidro_br_mensal.mat`.
+2. Select a state (`listdlg`).
+3. Select a station (`city | gauge_code`).
+4. Display three vertical panels (`tiledlayout(3,1)`):
+	- data availability (month x year),
+	- monthly hyetograph,
+	- annual totals with Mann-Kendall/Sen trend summary via `ktaub`.
