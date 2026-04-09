@@ -1,14 +1,33 @@
-"""Convert daily rainfall to monthly totals with hydrological missing-data tolerance.
+"""UNIPLU-BR CEMADEN monthly pre-processing pipeline.
 
-Expected daily input columns:
-- gauge_code
-- datetime
-- rain_mm
+Purpose:
+    Transform high-volume rainfall observations into hydrologically reliable
+    monthly products suitable for spatiotemporal analysis in MATLAB.
+
+Inputs:
+    1) ZIP mode (recommended):
+       - Directory containing files named like UF_YYYY.zip.
+       - Each ZIP must include: table_data.parquet and table_info.parquet.
+    2) CSV mode:
+       - Daily rainfall CSV with required columns:
+         gauge_code, datetime, rain_mm.
+
+Outputs:
+    - Filtered monthly rainfall CSV (quality controlled).
+    - Monthly rainfall with metadata CSV (lat/long/city/state/network).
+    - MATLAB .mat file (dados_hidro_br_mensal) for dashboard consumption.
+
+Hydrological quality rule:
+    Months with insufficient daily coverage are rejected to prevent false
+    dry-month anomalies. Validity combines:
+    - maximum allowed missing days, and
+    - minimum monthly completeness threshold (default: 90%).
 """
 
 from __future__ import annotations
 
 import argparse
+import calendar
 from pathlib import Path
 import zipfile
 
@@ -22,7 +41,19 @@ METADATA_COLUMNS = ["gauge_code", "lat", "long", "city", "state", "network"]
 
 
 def read_uniplu_br(zip_path: Path, table: str = "table_data") -> pd.DataFrame:
-    """Read a UNIPLU-BR parquet table from inside a ZIP file."""
+    """Read a UNIPLU-BR parquet table from a ZIP archive.
+
+    Args:
+        zip_path: Path to a state/year ZIP file.
+        table: Logical table name without extension. Expected values are
+            "table_data" (rainfall records) or "table_info" (station metadata).
+
+    Returns:
+        DataFrame loaded from the requested parquet table.
+
+    Raises:
+        KeyError: If the parquet file does not exist inside the ZIP.
+    """
     parquet_file = f"{table}.parquet"
     with zipfile.ZipFile(zip_path, "r") as zf:
         with zf.open(parquet_file) as file_obj:
@@ -30,7 +61,25 @@ def read_uniplu_br(zip_path: Path, table: str = "table_data") -> pd.DataFrame:
 
 
 def load_uniplu_data(data_dir: Path, states: list[str], years: list[int]) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """Load and concatenate UNIPLU rainfall and metadata tables from state/year ZIP files."""
+    """Load and concatenate UNIPLU rainfall and metadata from ZIP files.
+
+    This function scans the requested state/year combinations, reads both
+    rainfall and metadata tables when present, and performs a station-level
+    deduplication on metadata.
+
+    Args:
+        data_dir: Directory containing UF_YYYY.zip files.
+        states: List of state abbreviations (e.g., ["RS", "SC"]).
+        years: List of years to process.
+
+    Returns:
+        Tuple with:
+        - df_total_data: concatenated rainfall records.
+        - df_total_info: concatenated station metadata deduplicated by gauge_code.
+
+    Raises:
+        ValueError: If no valid rainfall or metadata records are found.
+    """
     data_list: list[pd.DataFrame] = []
     info_list: list[pd.DataFrame] = []
 
@@ -64,7 +113,23 @@ def load_uniplu_data(data_dir: Path, states: list[str], years: list[int]) -> tup
 
 
 def build_cemaden_daily(df_total_data: pd.DataFrame, df_total_info: pd.DataFrame) -> pd.DataFrame:
-    """Build CEMADEN daily rainfall totals from sub-daily records."""
+    """Build CEMADEN daily totals from sub-daily records.
+
+    The source feed may contain sub-daily accumulation timestamps. The method
+    reconstructs daily totals using a 24-hour resampling window anchored at
+    12:00 with right-closed intervals, followed by a one-step shift to align
+    totals with hydrological day convention used in the original workflow.
+
+    Args:
+        df_total_data: Rainfall records including gauge_code, datetime, rain_mm.
+        df_total_info: Metadata including network field to identify CEMADEN stations.
+
+    Returns:
+        DataFrame with daily CEMADEN rainfall totals.
+
+    Raises:
+        ValueError: If required metadata is missing or no CEMADEN records exist.
+    """
     if "network" not in df_total_info.columns:
         raise ValueError("df_total_info must contain column: network")
 
@@ -92,7 +157,17 @@ def build_cemaden_daily(df_total_data: pd.DataFrame, df_total_info: pd.DataFrame
 
 
 def build_monthly_filtered(df_daily: pd.DataFrame, max_missing_days: int, min_completeness: float) -> pd.DataFrame:
-    """Create df_monthly_filtered with columns: gauge_code, year, month, rain_mm."""
+    """Build quality-controlled monthly rainfall table.
+
+    Args:
+        df_daily: Daily rainfall table.
+        max_missing_days: Maximum missing daily records accepted per month.
+        min_completeness: Minimum daily coverage ratio required per month.
+
+    Returns:
+        DataFrame with schema: gauge_code, year, month, rain_mm.
+        Only hydrologically valid months are retained.
+    """
     df_monthly = aggregate_daily_to_monthly(
         df_daily=df_daily,
         max_missing_days=max_missing_days,
@@ -117,13 +192,31 @@ def aggregate_daily_to_monthly(
     max_missing_days: int = 3,
     min_completeness: float = 0.90,
 ) -> pd.DataFrame:
-    """Aggregate daily rainfall to monthly totals using tolerance rules.
+    """Aggregate daily rainfall to monthly totals using hydrological tolerance.
 
-    A month is valid when BOTH conditions are met:
+        Hydrological quality logic:
+        - Daily records are grouped by gauge_code/year/month.
+        - The expected number of daily observations is computed with the
+            standard calendar month length.
+        - A month is marked valid when BOTH completeness constraints are met.
+
+        A month is valid when BOTH conditions are met:
     1) missing_days <= max_missing_days
     2) completeness >= min_completeness
 
-    Invalid months are kept in the output, but `rain_mm_monthly` is set to NA.
+    Invalid months are retained with rain_mm_monthly = NA so downstream quality
+    diagnostics can still inspect coverage and rejection reason.
+
+    Args:
+        df_daily: Daily rainfall records.
+        max_missing_days: Hard limit for missing daily records in a month.
+        min_completeness: Minimum acceptable completeness ratio in [0, 1].
+
+    Returns:
+        Monthly table with rainfall totals and quality-control diagnostics.
+
+    Raises:
+        ValueError: If required columns or tolerance parameters are invalid.
     """
     missing_cols = REQUIRED_COLUMNS - set(df_daily.columns)
     if missing_cols:
@@ -138,23 +231,39 @@ def aggregate_daily_to_monthly(
     df["datetime"] = pd.to_datetime(df["datetime"], errors="coerce")
     df["rain_mm"] = pd.to_numeric(df["rain_mm"], errors="coerce")
 
-    # Remove records with invalid timestamp before period grouping.
+    # Invalid timestamps cannot be assigned to a hydrological month and must
+    # be removed before quality control metrics are computed.
     df = df.dropna(subset=["datetime"])
 
     monthly = (
-        df.assign(month=df["datetime"].dt.to_period("M"))
-        .groupby(["gauge_code", "month"], as_index=False)
+        df.assign(
+            year=df["datetime"].dt.year,
+            month=df["datetime"].dt.month,
+        )
+        .groupby(["gauge_code", "year", "month"], as_index=False)
         .agg(
             rain_mm_monthly_sum=("rain_mm", "sum"),
             n_days_with_data=("rain_mm", "count"),
         )
     )
 
-    monthly["datetime"] = monthly["month"].dt.to_timestamp(how="start")
-    monthly["n_days_expected"] = monthly["month"].dt.days_in_month
+    monthly["n_days_expected"] = monthly.apply(
+        lambda r: calendar.monthrange(int(r["year"]), int(r["month"]))[1],
+        axis=1,
+    )
     monthly["missing_days"] = monthly["n_days_expected"] - monthly["n_days_with_data"]
     monthly["completeness"] = monthly["n_days_with_data"] / monthly["n_days_expected"]
+    monthly["datetime"] = pd.to_datetime(
+        {
+            "year": monthly["year"],
+            "month": monthly["month"],
+            "day": 1,
+        }
+    )
 
+    # A month is accepted only if both absolute and relative data-availability
+    # constraints are satisfied, preventing false dry-month anomalies in the
+    # historical rainfall series.
     monthly["is_valid_month"] = (
         (monthly["missing_days"] <= max_missing_days)
         & (monthly["completeness"] >= min_completeness)
@@ -190,6 +299,15 @@ def merge_monthly_with_metadata(
 
     Keeps only rows from ``df_monthly_filtered`` and appends station attributes
     from ``df_total_info`` using ``gauge_code``.
+    Args:
+        df_monthly_filtered: Quality-controlled monthly rainfall table.
+        df_total_info: Station metadata table.
+
+    Returns:
+        Monthly rainfall table enriched with station geospatial/context fields.
+
+    Raises:
+        ValueError: If either input is missing required columns.
     """
     missing_monthly = MONTHLY_FILTERED_REQUIRED_COLUMNS - set(df_monthly_filtered.columns)
     if missing_monthly:
@@ -214,7 +332,14 @@ def merge_monthly_with_metadata(
 
 
 def _matlab_column_array(series: pd.Series):
-    """Convert a pandas Series into a MATLAB-friendly 1D array."""
+    """Convert a pandas Series into a MATLAB-compatible 1D array.
+
+    Conversion policy:
+    - datetime -> object array of formatted timestamp strings
+    - bool -> uint8 (robust logical representation across MATLAB versions)
+    - numeric -> numeric ndarray
+    - other -> object array of strings
+    """
     if pd.api.types.is_datetime64_any_dtype(series):
         # MATLAB reads this as a cell array of timestamp strings.
         return series.dt.strftime("%Y-%m-%d %H:%M:%S").fillna("").to_numpy(dtype=object)
@@ -235,7 +360,13 @@ def export_dataframe_to_mat(
     output_mat_path: str = "dados_hidro_br_mensal.mat",
     matlab_struct_name: str = "dados_hidro_br_mensal",
 ) -> None:
-    """Export a DataFrame to a .mat file as a MATLAB struct of column arrays."""
+    """Export a DataFrame to .mat as a MATLAB struct of column arrays.
+
+    Args:
+        df: Input DataFrame.
+        output_mat_path: Destination MAT file path.
+        matlab_struct_name: Struct variable name to create in MAT workspace.
+    """
     mat_struct = {col: _matlab_column_array(df[col]) for col in df.columns}
     savemat(output_mat_path, {matlab_struct_name: mat_struct})
 
@@ -244,7 +375,15 @@ def export_monthly_filtered_to_mat(
     df_monthly_filtered: pd.DataFrame,
     output_mat_path: str = "dados_hidro_br_mensal.mat",
 ) -> None:
-    """Export df_monthly_filtered to MATLAB .mat with column arrays."""
+    """Export filtered monthly rainfall to MATLAB MAT format.
+
+    Args:
+        df_monthly_filtered: DataFrame with required monthly schema.
+        output_mat_path: Destination MAT file.
+
+    Raises:
+        ValueError: If required columns are absent.
+    """
     required = {"gauge_code", "year", "month", "rain_mm"}
     missing = required - set(df_monthly_filtered.columns)
     if missing:
@@ -258,6 +397,7 @@ def export_monthly_filtered_to_mat(
 
 
 def _parse_args() -> argparse.Namespace:
+    """Parse command-line arguments for both ZIP and CSV pipelines."""
     parser = argparse.ArgumentParser(
         description=(
             "Process CEMADEN rainfall to monthly totals with tolerance filtering. "
@@ -315,6 +455,11 @@ def _parse_args() -> argparse.Namespace:
 
 
 def main() -> None:
+    """Execute preprocessing workflow according to CLI mode.
+
+    ZIP mode performs the full UNIPLU-BR ingestion and CEMADEN filtering
+    pipeline. CSV mode assumes daily rainfall is already prepared.
+    """
     args = _parse_args()
 
     if args.data_dir:
@@ -328,6 +473,8 @@ def main() -> None:
             max_missing_days=args.max_missing_days,
             min_completeness=args.min_completeness,
         )
+        # Metadata merge preserves hydrological rows while adding spatial
+        # attributes required by the MATLAB dashboard.
         df_monthly_with_geo = merge_monthly_with_metadata(df_monthly_filtered, df_total_info)
 
         df_monthly_filtered.to_csv(args.output_csv, index=False)
@@ -344,7 +491,21 @@ def main() -> None:
         return
 
     if not args.input_csv:
-        raise ValueError("Provide input_csv or use --data-dir for direct ZIP processing.")
+        print("Error: no input source was provided.")
+        print("Provide either an input CSV path or use --data-dir for UNIPLU-BR ZIP processing.")
+        print()
+        print("Examples:")
+        print(
+            "  python cemaden_monthly_tolerance.py --data-dir UNIPLU_BR-dados "
+            "--states RS,SC --years 2023,2024"
+        )
+        print(
+            "  python cemaden_monthly_tolerance.py df_cemaden_daily.csv "
+            "--output-csv df_monthly_filtered.csv"
+        )
+        print()
+        print("Tip: run with --help to see all options.")
+        raise SystemExit(2)
 
     df_daily = pd.read_csv(args.input_csv)
     df_monthly_filtered = build_monthly_filtered(

@@ -1,87 +1,97 @@
-# mapa-pluviometrico-matlab
+# UNIPLU-BR Hydroclimatic Processing and Visualization Toolkit
 
-## Script Report: CEMADEN Monthly Rainfall Processing
+This repository contains an academic workflow for hydroclimatic analysis of Brazilian rainfall data from UNIPLU-BR. The workflow combines a Python preprocessing engine (quality control, temporal aggregation, and data packaging) with a MATLAB interactive dashboard (spatial and temporal interpretation).
 
-This repository now includes the standalone script [cemaden_monthly_tolerance.py](cemaden_monthly_tolerance.py), created to run outside Jupyter and support reproducible rainfall processing workflows.
+## Project Overview
 
-### Objective
+The project objective is to transform high-volume daily rainfall observations into hydrologically robust monthly and annual products, reducing data-availability bias and enabling transparent scientific interpretation.
 
-Convert daily rainfall records into monthly totals using hydrological missing-data tolerance rules, enrich monthly outputs with station metadata, and export final results to MATLAB `.mat` format.
+## Prerequisites
 
-### Implemented Features
+### Software
 
-1. Daily to monthly aggregation with quality tolerance:
-- Function: `aggregate_daily_to_monthly(df_daily, max_missing_days=3, min_completeness=0.90)`
-- Required input columns: `gauge_code`, `datetime`, `rain_mm`
-- Valid month criteria:
-	- `missing_days <= max_missing_days`
-	- `completeness >= min_completeness`
+1. Python 3.10 or newer
+2. MATLAB
 
-2. Merge with station metadata:
-- Function: `merge_monthly_with_metadata(df_monthly_filtered, df_total_info)`
-- Join key: `gauge_code`
-- Join mode: `left` (keeps only stations present in `df_monthly_filtered`)
-- Added metadata columns: `lat`, `long`, `city`, `state`, `network`
+### Python libraries
 
-3. MATLAB export (`.mat`) for GUI usage:
-- Function: `export_monthly_filtered_to_mat(df_monthly_filtered, output_mat_path='dados_hidro_br_mensal.mat')`
-- Uses `scipy.io.savemat`
-- Exports a MATLAB struct named `dados_hidro_br_mensal` with column-wise arrays for easy field access.
+1. pandas
+2. scipy
+3. pyarrow
 
-### Command-Line Usage
-
-Generate monthly rainfall CSV from daily input:
+Installation command:
 
 ```bash
-python cemaden_monthly_tolerance.py daily_input.csv \
-	--output-csv cemaden_monthly_tolerance.csv \
-	--max-missing-days 3 \
-	--min-completeness 0.90
+python -m pip install pandas scipy pyarrow
 ```
 
-### Programmatic Usage
+## Architecture Flow
 
-```python
-from cemaden_monthly_tolerance import (
-		aggregate_daily_to_monthly,
-		merge_monthly_with_metadata,
-		export_monthly_filtered_to_mat,
-)
-
-# 1) Monthly aggregation with tolerance
-df_monthly = aggregate_daily_to_monthly(df_cemaden_daily, 3, 0.90)
-
-# 2) Example filtered monthly frame (expected columns: gauge_code, year, month, rain_mm)
-# df_monthly_filtered = ...
-
-# 3) Merge monthly values with station metadata
-df_monthly_with_geo = merge_monthly_with_metadata(df_monthly_filtered, df_total_info)
-
-# 4) Export filtered monthly table to MATLAB
-export_monthly_filtered_to_mat(df_monthly_filtered, 'dados_hidro_br_mensal.mat')
+```mermaid
+flowchart LR
+    A[Raw Data] --> B[Python preprocessing (cemaden_monthly_tolerance.py applying 10% rule)]
+    B --> C[Outputs (.mat and .csv)]
+    C --> D[MATLAB interactive dashboard (uniplu_station_panel.m generating spatial maps, hyetographs, and MK trends)]
 ```
 
-### Dependencies
+## Step-by-Step Recipe
 
-- `pandas`
-- `scipy`
+### Step 1: Python preprocessing engine
 
-## Repository Organization
+Run the preprocessing pipeline from the repository root. This stage applies the strict hydrological filter (maximum 10% missing daily records per month, equivalent to minimum 90% completeness) before monthly aggregation.
 
-To reduce clutter and keep processing artifacts separated from source files:
+```bash
+c:/dev/jaidna/mapa-pluviometrico-matlab/.venv/Scripts/python.exe cemaden_monthly_tolerance.py --data-dir UNIPLU_BR-dados --states RS,SC --years 2023,2024 --output-csv outputs/df_monthly_filtered_real.csv --output-with-geo-csv outputs/df_monthly_filtered_with_geo_real.csv --output-mat outputs/dados_hidro_br_mensal_real.mat
+```
 
-1. Generated outputs are stored in [outputs](outputs).
-2. MATLAB analysis scripts are stored in [scripts/matlab](scripts/matlab).
-3. Python helper script folders are available in [scripts/python](scripts/python).
+Main products generated:
 
-### New MATLAB Interactive Panel Script
+1. outputs/dados_hidro_br_mensal_real.mat
+2. outputs/df_monthly_filtered_real.csv
+3. outputs/df_monthly_filtered_with_geo_real.csv
 
-Use [scripts/matlab/uniplu_station_panel.m](scripts/matlab/uniplu_station_panel.m) to:
+### Step 2: MATLAB interactive dashboard
 
-1. Load `dados_hidro_br_mensal.mat`.
-2. Select a state (`listdlg`).
-3. Select a station (`city | gauge_code`).
-4. Display three vertical panels (`tiledlayout(3,1)`):
-	- data availability (month x year),
-	- monthly hyetograph,
-	- annual totals with Mann-Kendall/Sen trend summary via `ktaub`.
+Run scripts/matlab/uniplu_station_panel.m in MATLAB.
+
+1. Open MATLAB.
+2. Set working directory to the project root.
+3. Execute scripts/matlab/uniplu_station_panel.m.
+4. Select analysis module, state/station scope, and time interval through dialog boxes.
+
+## MATLAB Dashboard Outputs
+
+The dashboard provides the following analysis products:
+
+1. Spatial Interpolation Maps:
+   Annual state-level rainfall maps generated using scatteredInterpolant and contourf.
+2. Availability Matrices:
+   Month-by-year visual diagnostics showing present versus missing observations.
+3. Hyetographs:
+   Annual precipitation signal with long-term mean and linear trendline.
+4. Mann-Kendall / Sen's slope trend analysis:
+   Non-parametric trend significance (p-value) and trend magnitude (Sen slope).
+
+## Repository Structure
+
+```text
+mapa-pluviometrico-matlab/
+|-- scripts/
+|   |-- python/
+|   `-- matlab/
+|       `-- uniplu_station_panel.m
+|-- outputs/
+|-- UNIPLU_BR-dados/
+|-- UNIPLU-BR/
+|-- cemaden_monthly_tolerance.py
+|-- pre_processamento.py
+|-- pre-processamento.py
+|-- mapapluviometria.m
+`-- ktaub.m
+```
+
+## Scientific Notes
+
+1. The 10% missing-data tolerance was adopted to prevent artificial dry-month detection caused by observational gaps.
+2. Annual trend analysis should always be interpreted jointly by p-value and Sen's slope.
+3. All outputs should be archived with run metadata (state filters, year range, command line, and script version) for reproducibility.
