@@ -55,65 +55,55 @@ The MATLAB scripts are preserved in `matlab_archive/` for historical reference.
 ### 1. Clone and create a virtual environment
 
 ```bash
-git clone <repo-url>
-cd mapa-pluviometrico-matlab
-
-python -m venv venv
-# Windows
-venv\Scriptsctivate
-# macOS / Linux
-source venv/bin/activate
+python cemaden_monthly_tolerance.py daily_input.csv \
+	--output-csv cemaden_monthly_tolerance.csv \
+	--max-missing-days 3 \
+	--min-completeness 0.90
 ```
 
-### 2. Install dependencies
+### Programmatic Usage
 
-```bash
-pip install -r requirements.txt
+```python
+from cemaden_monthly_tolerance import (
+		aggregate_daily_to_monthly,
+		merge_monthly_with_metadata,
+		export_monthly_filtered_to_mat,
+)
+
+# 1) Monthly aggregation with tolerance
+df_monthly = aggregate_daily_to_monthly(df_cemaden_daily, 3, 0.90)
+
+# 2) Example filtered monthly frame (expected columns: gauge_code, year, month, rain_mm)
+# df_monthly_filtered = ...
+
+# 3) Merge monthly values with station metadata
+df_monthly_with_geo = merge_monthly_with_metadata(df_monthly_filtered, df_total_info)
+
+# 4) Export filtered monthly table to MATLAB
+export_monthly_filtered_to_mat(df_monthly_filtered, 'dados_hidro_br_mensal.mat')
 ```
 
-### 3. Run the ETL pipeline
+### Dependencies
 
-**Option A — from raw daily CSV:**
-```bash
-python src/cemaden_monthly_tolerance.py data/raw/df_cemaden_daily.csv     --output-csv data/processed/df_monthly_filtered.csv     --output-with-geo-csv data/processed/df_monthly_filtered_with_geo.csv
-```
+- `pandas`
+- `scipy`
 
-**Option B — from UNIPLU-BR ZIP files:**
-```bash
-python src/cemaden_monthly_tolerance.py     --data-dir UNIPLU_BR-dados     --states RS,SC     --years 2022,2023,2024     --output-csv data/processed/df_monthly_filtered.csv     --output-with-geo-csv data/processed/df_monthly_filtered_with_geo.csv
-```
+## Repository Organization
 
-### 4. Launch the Streamlit dashboard
+To reduce clutter and keep processing artifacts separated from source files:
 
-```bash
-streamlit run src/app_pluviometria.py
-```
+1. Generated outputs are stored in [outputs](outputs).
+2. MATLAB analysis scripts are stored in [scripts/matlab](scripts/matlab).
+3. Python helper script folders are available in [scripts/python](scripts/python).
 
-Open [http://localhost:8501](http://localhost:8501) in your browser.
+### New MATLAB Interactive Panel Script
 
-### 5. Run the EDA notebook
+Use [scripts/matlab/uniplu_station_panel.m](scripts/matlab/uniplu_station_panel.m) to:
 
-```bash
-jupyter notebook notebooks/01_eda_precipitation_trends.ipynb
-```
-
----
-
-## Data Description
-
-| Column | Type | Description |
-|---|---|---|
-| `gauge_code` | string | Unique station identifier |
-| `year` | int | Calendar year |
-| `month` | int | Calendar month (1–12) |
-| `rain_mm` | float | Monthly precipitation total (mm). NaN = invalid month |
-| `lat` / `long` | float | Station coordinates (WGS-84) |
-| `city` | string | Municipality |
-| `state` | string | Brazilian state (UF) |
-| `network` | string | Monitoring network (e.g., CEMADEN) |
-
----
-
-## License
-
-See [LICENSE](LICENSE).
+1. Load `dados_hidro_br_mensal.mat`.
+2. Select a state (`listdlg`).
+3. Select a station (`city | gauge_code`).
+4. Display three vertical panels (`tiledlayout(3,1)`):
+	- data availability (month x year),
+	- monthly hyetograph,
+	- annual totals with Mann-Kendall/Sen trend summary via `ktaub`.
