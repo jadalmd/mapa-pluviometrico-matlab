@@ -1,87 +1,119 @@
-# mapa-pluviometrico-matlab
+# Mapa Pluviométrico BR 🌧️
 
-## Script Report: CEMADEN Monthly Rainfall Processing
+Interactive analysis of monthly precipitation from CEMADEN / UNIPLU-BR monitoring stations across Brazil — **100% Python**, powered by Streamlit and Plotly.
 
-This repository now includes the standalone script [cemaden_monthly_tolerance.py](cemaden_monthly_tolerance.py), created to run outside Jupyter and support reproducible rainfall processing workflows.
+---
 
-### Objective
+## Architecture
 
-Convert daily rainfall records into monthly totals using hydrological missing-data tolerance rules, enrich monthly outputs with station metadata, and export final results to MATLAB `.mat` format.
+```mermaid
+flowchart LR
+    A["📂 data/raw"]
+    B["⚙️ src/cemaden_monthly_tolerance.py
+ETL · tolerance filter · geo-merge"]
+    C["📂 data/processed"]
+    D["🌐 src/app_pluviometria.py
+Streamlit dashboard"]
+    E["📓 notebooks/01_eda_precipitation_trends.ipynb"]
 
-### Implemented Features
+    A --> B --> C --> D
+    C --> E
+```
 
-1. Daily to monthly aggregation with quality tolerance:
-- Function: `aggregate_daily_to_monthly(df_daily, max_missing_days=3, min_completeness=0.90)`
-- Required input columns: `gauge_code`, `datetime`, `rain_mm`
-- Valid month criteria:
-	- `missing_days <= max_missing_days`
-	- `completeness >= min_completeness`
+### Key components
 
-2. Merge with station metadata:
-- Function: `merge_monthly_with_metadata(df_monthly_filtered, df_total_info)`
-- Join key: `gauge_code`
-- Join mode: `left` (keeps only stations present in `df_monthly_filtered`)
-- Added metadata columns: `lat`, `long`, `city`, `state`, `network`
+| Component | Purpose |
+|---|---|
+| `src/cemaden_monthly_tolerance.py` | ETL: daily → monthly aggregation with 90% completeness filter |
+| `src/app_pluviometria.py` | Streamlit interactive dashboard |
+| `notebooks/01_eda_precipitation_trends.ipynb` | Reproducible EDA notebook |
+| `data/raw/` | Raw input CSVs (daily records + station metadata) |
+| `data/processed/` | Clean, analysis-ready CSV outputs |
+| `matlab_archive/` | Archived legacy MATLAB scripts (preserved for history, not used) |
 
-3. MATLAB export (`.mat`) for GUI usage:
-- Function: `export_monthly_filtered_to_mat(df_monthly_filtered, output_mat_path='dados_hidro_br_mensal.mat')`
-- Uses `scipy.io.savemat`
-- Exports a MATLAB struct named `dados_hidro_br_mensal` with column-wise arrays for easy field access.
+---
 
-### Command-Line Usage
+## Why We Migrated from MATLAB to Python
 
-Generate monthly rainfall CSV from daily input:
+The previous architecture used a hybrid MATLAB + Python workflow. This caused repeated friction:
+
+| Pain Point | Resolution |
+|---|---|
+| **Absolute path errors** | Python `pathlib.Path` with relative references — works on any machine |
+| **Proprietary MATLAB license** | Fully open-source stack: pandas, plotly, streamlit |
+| **Blocking UI** | Streamlit runs as a non-blocking web app; shareable via URL |
+| **No cross-platform reproducibility** | `requirements.txt` + `venv` — identical environment on Windows, macOS, Linux |
+| **Manual Mann-Kendall (`ktaub.m`)** | Replaced by `pymannkendall` (pip-installable, tested, documented) |
+| **MATLAB file exchange (`.mat`)** | Output is standard CSV / Parquet, readable by any tool |
+
+The MATLAB scripts are preserved in `matlab_archive/` for historical reference.
+
+---
+
+## Setup Instructions
+
+### 1. Clone and create a virtual environment
 
 ```bash
-python cemaden_monthly_tolerance.py daily_input.csv \
-	--output-csv cemaden_monthly_tolerance.csv \
-	--max-missing-days 3 \
-	--min-completeness 0.90
+git clone <repo-url>
+cd mapa-pluviometrico-matlab
+
+python -m venv venv
+# Windows
+venv\Scriptsctivate
+# macOS / Linux
+source venv/bin/activate
 ```
 
-### Programmatic Usage
+### 2. Install dependencies
 
-```python
-from cemaden_monthly_tolerance import (
-		aggregate_daily_to_monthly,
-		merge_monthly_with_metadata,
-		export_monthly_filtered_to_mat,
-)
-
-# 1) Monthly aggregation with tolerance
-df_monthly = aggregate_daily_to_monthly(df_cemaden_daily, 3, 0.90)
-
-# 2) Example filtered monthly frame (expected columns: gauge_code, year, month, rain_mm)
-# df_monthly_filtered = ...
-
-# 3) Merge monthly values with station metadata
-df_monthly_with_geo = merge_monthly_with_metadata(df_monthly_filtered, df_total_info)
-
-# 4) Export filtered monthly table to MATLAB
-export_monthly_filtered_to_mat(df_monthly_filtered, 'dados_hidro_br_mensal.mat')
+```bash
+pip install -r requirements.txt
 ```
 
-### Dependencies
+### 3. Run the ETL pipeline
 
-- `pandas`
-- `scipy`
+**Option A — from raw daily CSV:**
+```bash
+python src/cemaden_monthly_tolerance.py data/raw/df_cemaden_daily.csv     --output-csv data/processed/df_monthly_filtered.csv     --output-with-geo-csv data/processed/df_monthly_filtered_with_geo.csv
+```
 
-## Repository Organization
+**Option B — from UNIPLU-BR ZIP files:**
+```bash
+python src/cemaden_monthly_tolerance.py     --data-dir UNIPLU_BR-dados     --states RS,SC     --years 2022,2023,2024     --output-csv data/processed/df_monthly_filtered.csv     --output-with-geo-csv data/processed/df_monthly_filtered_with_geo.csv
+```
 
-To reduce clutter and keep processing artifacts separated from source files:
+### 4. Launch the Streamlit dashboard
 
-1. Generated outputs are stored in [outputs](outputs).
-2. MATLAB analysis scripts are stored in [scripts/matlab](scripts/matlab).
-3. Python helper script folders are available in [scripts/python](scripts/python).
+```bash
+streamlit run src/app_pluviometria.py
+```
 
-### New MATLAB Interactive Panel Script
+Open [http://localhost:8501](http://localhost:8501) in your browser.
 
-Use [scripts/matlab/uniplu_station_panel.m](scripts/matlab/uniplu_station_panel.m) to:
+### 5. Run the EDA notebook
 
-1. Load `dados_hidro_br_mensal.mat`.
-2. Select a state (`listdlg`).
-3. Select a station (`city | gauge_code`).
-4. Display three vertical panels (`tiledlayout(3,1)`):
-	- data availability (month x year),
-	- monthly hyetograph,
-	- annual totals with Mann-Kendall/Sen trend summary via `ktaub`.
+```bash
+jupyter notebook notebooks/01_eda_precipitation_trends.ipynb
+```
+
+---
+
+## Data Description
+
+| Column | Type | Description |
+|---|---|---|
+| `gauge_code` | string | Unique station identifier |
+| `year` | int | Calendar year |
+| `month` | int | Calendar month (1–12) |
+| `rain_mm` | float | Monthly precipitation total (mm). NaN = invalid month |
+| `lat` / `long` | float | Station coordinates (WGS-84) |
+| `city` | string | Municipality |
+| `state` | string | Brazilian state (UF) |
+| `network` | string | Monitoring network (e.g., CEMADEN) |
+
+---
+
+## License
+
+See [LICENSE](LICENSE).

@@ -13,8 +13,6 @@ from pathlib import Path
 import zipfile
 
 import pandas as pd
-from scipy.io import savemat
-
 
 REQUIRED_COLUMNS = {"gauge_code", "datetime", "rain_mm"}
 MONTHLY_FILTERED_REQUIRED_COLUMNS = {"gauge_code", "year", "month", "rain_mm"}
@@ -213,50 +211,6 @@ def merge_monthly_with_metadata(
     return merged
 
 
-def _matlab_column_array(series: pd.Series):
-    """Convert a pandas Series into a MATLAB-friendly 1D array."""
-    if pd.api.types.is_datetime64_any_dtype(series):
-        # MATLAB reads this as a cell array of timestamp strings.
-        return series.dt.strftime("%Y-%m-%d %H:%M:%S").fillna("").to_numpy(dtype=object)
-
-    if pd.api.types.is_bool_dtype(series):
-        # uint8 is robust across MATLAB versions for logical-like flags.
-        return series.fillna(False).astype("uint8").to_numpy()
-
-    if pd.api.types.is_numeric_dtype(series):
-        return pd.to_numeric(series, errors="coerce").to_numpy()
-
-    # Strings / mixed types are exported as MATLAB cell arrays of char vectors.
-    return series.astype("string").fillna("").to_numpy(dtype=object)
-
-
-def export_dataframe_to_mat(
-    df: pd.DataFrame,
-    output_mat_path: str = "dados_hidro_br_mensal.mat",
-    matlab_struct_name: str = "dados_hidro_br_mensal",
-) -> None:
-    """Export a DataFrame to a .mat file as a MATLAB struct of column arrays."""
-    mat_struct = {col: _matlab_column_array(df[col]) for col in df.columns}
-    savemat(output_mat_path, {matlab_struct_name: mat_struct})
-
-
-def export_monthly_filtered_to_mat(
-    df_monthly_filtered: pd.DataFrame,
-    output_mat_path: str = "dados_hidro_br_mensal.mat",
-) -> None:
-    """Export df_monthly_filtered to MATLAB .mat with column arrays."""
-    required = {"gauge_code", "year", "month", "rain_mm"}
-    missing = required - set(df_monthly_filtered.columns)
-    if missing:
-        raise ValueError(f"df_monthly_filtered is missing columns: {sorted(missing)}")
-
-    export_dataframe_to_mat(
-        df=df_monthly_filtered,
-        output_mat_path=output_mat_path,
-        matlab_struct_name="dados_hidro_br_mensal",
-    )
-
-
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
@@ -295,11 +249,6 @@ def _parse_args() -> argparse.Namespace:
         help="Path to output merged monthly+metadata CSV (default: df_monthly_filtered_with_geo.csv).",
     )
     parser.add_argument(
-        "--output-mat",
-        default="dados_hidro_br_mensal.mat",
-        help="Path to output MATLAB MAT file (default: dados_hidro_br_mensal.mat).",
-    )
-    parser.add_argument(
         "--max-missing-days",
         type=int,
         default=3,
@@ -332,7 +281,6 @@ def main() -> None:
 
         df_monthly_filtered.to_csv(args.output_csv, index=False)
         df_monthly_with_geo.to_csv(args.output_with_geo_csv, index=False)
-        export_monthly_filtered_to_mat(df_monthly_filtered, args.output_mat)
 
         print("UNIPLU-BR ZIP pipeline completed.")
         print(f"Loaded rainfall rows: {len(df_total_data)}")
@@ -340,7 +288,6 @@ def main() -> None:
         print(f"Filtered monthly rows: {len(df_monthly_filtered)}")
         print(f"Saved: {args.output_csv}")
         print(f"Saved: {args.output_with_geo_csv}")
-        print(f"Saved: {args.output_mat}")
         return
 
     if not args.input_csv:
@@ -354,12 +301,10 @@ def main() -> None:
     )
 
     df_monthly_filtered.to_csv(args.output_csv, index=False)
-    export_monthly_filtered_to_mat(df_monthly_filtered, args.output_mat)
 
     print("Daily CSV pipeline completed.")
     print(f"Filtered monthly rows: {len(df_monthly_filtered)}")
     print(f"Saved: {args.output_csv}")
-    print(f"Saved: {args.output_mat}")
 
 
 if __name__ == "__main__":
